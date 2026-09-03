@@ -506,6 +506,54 @@ app = FastAPI(
 )
 
 
+# ---------------------------------------------------------------
+# MCP listen-connection timeout -- fixes the Cloud Run cost spike confirmed
+# 2026-09-03 (same pattern as erc8004-agent-liveness, see that repo's
+# patch_mcp_listen_timeout.py for the full root-cause writeup). Third-party
+# MCP-monitoring bots open GET /mcp/ "listen" connections (per the
+# Streamable HTTP transport spec) and this asset -- which never pushes
+# server-initiated notifications -- never closes them, so every one rode
+# Cloud Run's full 300s request timeout and was billed for the whole
+# duration. This applies ONLY to GET requests under /mcp -- the paid POST
+# tool-call path and every other route are completely untouched.
+# ---------------------------------------------------------------
+_NEXUS_MCP_LISTEN_TIMEOUT_SECONDS = 25
+
+
+class _NexusMcpListenTimeoutMiddleware:
+    """Pure ASGI middleware. Enforces a short idle timeout on GET /mcp
+    listen connections only. On timeout, cancels the inner call and lets
+    the ASGI server close the underlying connection -- equivalent to a
+    normal disconnect from the client's point of view, which any
+    SSE-based MCP client already has to handle and reconnect from."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if (
+            scope["type"] == "http"
+            and scope.get("method") == "GET"
+            and scope.get("path", "").rstrip("/").startswith("/mcp")
+        ):
+            try:
+                await asyncio.wait_for(
+                    self.app(scope, receive, send),
+                    timeout=_NEXUS_MCP_LISTEN_TIMEOUT_SECONDS,
+                )
+            except asyncio.TimeoutError:
+                # Connection closes here -- no further ASGI messages are
+                # sent, which is the correct way to end a still-open SSE
+                # response early. Intentionally swallowed: this is an
+                # expected, routine cutoff, not an error condition.
+                return
+        else:
+            await self.app(scope, receive, send)
+
+
+app.add_middleware(_NexusMcpListenTimeoutMiddleware)
+
+
 # --- x402: pay-per-call in USDC, Base Sepolia testnet -- same wallet,
 #     facilitator and self-payment-bug fix as the sibling manual assets
 #     (skills/x402-payments). Speculative niche per the product owner ->
