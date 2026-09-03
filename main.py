@@ -76,6 +76,8 @@ from x402.http.types import RouteConfig
 from x402.mechanisms.evm.exact import ExactEvmServerScheme
 from x402.schemas import Network
 from x402.server import x402ResourceServer
+# --- PATCH mainnet_cutover_new_x402_listings_feed ---
+from cdp.x402 import create_facilitator_config as _nexus_cdp_create_facilitator_config
 
 _NEXUS_ASSET_NAME = "new-x402-listings-feed"
 
@@ -554,15 +556,20 @@ class _NexusMcpListenTimeoutMiddleware:
 app.add_middleware(_NexusMcpListenTimeoutMiddleware)
 
 
-# --- x402: pay-per-call in USDC, Base Sepolia testnet -- same wallet,
-#     facilitator and self-payment-bug fix as the sibling manual assets
+# --- x402: pay-per-call in USDC, Base mainnet -- same wallet, facilitator
+#     and self-payment-bug fix as the sibling manual assets
 #     (skills/x402-payments). Speculative niche per the product owner ->
 #     low tier, matching url-metadata-api/document-conversion-api's
 #     $0.01-$0.02 tier, not agent-verification-api's $0.35 signal tier. ---
 _NEXUS_X402_FREE_MODE = os.getenv("NEXUS_X402_FREE_MODE", "false").strip().lower() == "true"
 
-_X402_EVM_ADDRESS = os.getenv("X402_WALLET_ADDRESS", "0xYOUR_WALLET_ADDRESS_HERE")
-_X402_NETWORK: Network = "eip155:84532"  # Base Sepolia testnet
+# --- PATCH mainnet_cutover_new_x402_listings_feed ---
+# Wallet read from env, fail-fast (no placeholder default) -- same pattern
+# as ws/live-entity-verification/erc8004-agent-liveness/onchain-activity-index/
+# x402-receipt-verifier: if it's missing, boot must fail loudly instead of
+# silently issuing 402 challenges that can never settle.
+_X402_EVM_ADDRESS = os.environ["NEXUS_X402_PAYTO_ADDRESS"]
+_X402_NETWORK: Network = "eip155:8453"  # Base mainnet
 _X402_PRICE = os.getenv("X402_PRICE", "$0.01")
 
 if not _X402_PRICE or not _X402_PRICE.startswith("$"):
@@ -581,14 +588,20 @@ _looks_like_evm_address = (
 )
 if not _NEXUS_X402_FREE_MODE and not _looks_like_evm_address:
     print(
-        f"[WARN] X402_WALLET_ADDRESS ({_X402_EVM_ADDRESS!r}) doesn't look like a "
+        f"[WARN] NEXUS_X402_PAYTO_ADDRESS ({_X402_EVM_ADDRESS!r}) doesn't look like a "
         "real EVM address (expected '0x' + 40 hex chars). The server will still "
         "boot and issue 402 challenges, but payments will have nowhere real to "
         "settle. See README.md.",
         file=sys.stderr,
     )
 
-_x402_facilitator = HTTPFacilitatorClient(FacilitatorConfig(url="https://x402.org/facilitator"))
+# CDP Facilitator (not x402.org) -- same swap already applied to
+# ws/live-entity-verification/erc8004-agent-liveness/onchain-activity-index/
+# x402-receipt-verifier: indexes real verify/settle calls in Coinbase's
+# Bazaar. create_facilitator_config() reads CDP_API_KEY_ID/CDP_API_KEY_SECRET
+# from the environment -- must be set in Cloud Run before this deploys, or
+# the first real settle will 401.
+_x402_facilitator = HTTPFacilitatorClient(_nexus_cdp_create_facilitator_config())
 _x402_server = x402ResourceServer(_x402_facilitator)
 _x402_server.register(_X402_NETWORK, ExactEvmServerScheme())
 
@@ -726,8 +739,8 @@ async def agent_card() -> dict:
         "metadata": {
             "protocol_note": (
                 "This service implements the Model Context Protocol (MCP) at /mcp, not A2A's own task "
-                "methods. POST /new-x402-listings is charged $0.01 via x402 (Base Sepolia TESTNET, not "
-                "real funds); the MCP tool is currently free -- see README. Payment settles BEFORE this "
+                "methods. POST /new-x402-listings is charged $0.01 via x402 (Base mainnet, real USDC); "
+                "the MCP tool is currently free -- see README. Payment settles BEFORE this "
                 "handler runs: a call that 422s (invalid request body) is still charged, same as a 200. "
                 "Underlying registration data is 402index.io's own free public API "
                 "(https://402index.io/api-docs) -- this service does not have exclusive access to "
@@ -763,3 +776,5 @@ def _nexus_openapi_with_payment_info():
 app.openapi = _nexus_openapi_with_payment_info
 
 app.mount("/mcp", mcp.streamable_http_app())
+
+# NEXUS_MAINNET_CUTOVER_APPLIED_new_x402_listings_feed

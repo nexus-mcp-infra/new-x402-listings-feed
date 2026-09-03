@@ -10,6 +10,15 @@ candidate #8 -- **manual build, not FORGE-generated**, same manual-Cloud-Run-ass
 - `GET /health`, `GET /.well-known/agent-card.json`, `GET /openapi.json` (has `x-payment-info`),
   `GET /.well-known/402index-verify.txt` (402index claim verification file).
 
+## Mainnet cutover (2026-09-03)
+
+Originally built and measured on Base Sepolia testnet. Cut over to Base mainnet: x402 settlement moved to
+the CDP facilitator (`create_facilitator_config()`, same swap already applied to
+`ws`/`live-entity-verification`/`erc8004-agent-liveness`/`onchain-activity-index`/`x402-receipt-verifier`),
+and the payto wallet moved to `NEXUS_X402_PAYTO_ADDRESS` (fail-fast env var, no placeholder default,
+renamed from `X402_WALLET_ADDRESS`). `CDP_API_KEY_ID`/`CDP_API_KEY_SECRET` and
+`NEXUS_X402_PAYTO_ADDRESS` must be set in Cloud Run before this deploys.
+
 ## What this is (and isn't)
 
 **This is not exclusive data.** The registration data underneath this asset is 402index.io's own free,
